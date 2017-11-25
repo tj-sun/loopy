@@ -367,6 +367,8 @@ class ExpressionToCExpressionMapper(IdentityMapper):
             return var("%s_new" % cast_type)(expr.real, expr.imag)
         else:
             from loopy.symbolic import Literal
+            if np.isnan(expr):
+                return Literal("NAN")
             if type_context == "f":
                 return Literal(repr(float(expr))+"f")
             elif type_context == "d":
@@ -755,7 +757,7 @@ class CExpressionToCodeMapper(RecursiveMapper):
 
     def map_min(self, expr, enclosing_prec):
         what = type(expr).__name__.lower()
-
+        what = "f" + what
         children = list(expr.children)
 
         result = self.rec(children.pop(), PREC_NONE)
