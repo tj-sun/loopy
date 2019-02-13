@@ -30,6 +30,8 @@ from islpy import dim_type
 from loopy.kernel.data import ImageArg
 
 from pytools import MovedFunctionDeprecationWrapper
+from pymbolic.primitives import Subscript
+from loopy.symbolic import IdentityMapper
 from loopy.program import Program, iterate_over_kernels_if_given_program
 from loopy.kernel import LoopKernel
 from loopy.kernel.function_interface import CallableKernel, ScalarCallable
@@ -799,5 +801,47 @@ def reduction_arg_to_subst_rule(knl, inames, insn_match=None, subst_rule_name=No
 
 # }}}
 
+
+class AxesRemovingMapper(IdentityMapper):
+    def __init__(self, tv_to_removable_axes):
+        self.tv_to_removable_axes = tv_to_removable_axes
+
+    def map_subscript(self, expr):
+        removable_indices = self.tv_to_removable_axes.get(expr.aggregate.name,
+                None)
+
+        if removable_indices:
+            assert all(idx == 0 for idx in removable_indices)
+            new_expr = Subscript(expr.aggregate, tuple(self.rec(idx) for i, idx
+                in enumerate(expr.index_tuple) if i not in
+                removable_indices))
+
+            return new_expr
+
+        return super(AxesRemovingMapper, self).map_subscript(expr)
+
+
+def remove_unused_axes_in_temporaries(kernel):
+    new_temps = {}
+    tv_x_removable_axes = {}
+    for tv in kernel.temporary_variables.values():
+        removable_axes = tuple(i for i, axis_len in enumerate(tv.shape) if
+                axis_len == 1)
+        if removable_axes:
+            tv_x_removable_axes[tv.name] = removable_axes
+            new_temps[tv.name] = tv.copy(shape=tuple(axis_len for axis_len in
+                tv.shape if axis_len != 1),
+                dim_tags=tuple(stride for stride, axis_len in
+                    zip(tv.dim_tags, tv.shape) if axis_len != 1))
+        else:
+            new_temps[tv.name] = tv
+
+    new_insns = []
+    axes_removing_mapper = AxesRemovingMapper(tv_x_removable_axes)
+
+    for insn in kernel.instructions:
+        new_insns.append(insn.with_transformed_expressions(axes_removing_mapper))
+
+    return kernel.copy(instructions=new_insns, temporary_variables=new_temps)
 
 # vim: foldmethod=marker
