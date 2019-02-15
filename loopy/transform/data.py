@@ -31,7 +31,7 @@ from loopy.kernel.data import ImageArg
 
 from pytools import MovedFunctionDeprecationWrapper
 from pymbolic.primitives import Subscript
-from loopy.symbolic import IdentityMapper
+from loopy.symbolic import (IdentityMapper, simplify_using_aff)
 from loopy.program import Program, iterate_over_kernels_if_given_program
 from loopy.kernel import LoopKernel
 from loopy.kernel.function_interface import CallableKernel, ScalarCallable
@@ -843,5 +843,58 @@ def remove_unused_axes_in_temporaries(kernel):
         new_insns.append(insn.with_transformed_expressions(axes_removing_mapper))
 
     return kernel.copy(instructions=new_insns, temporary_variables=new_temps)
+
+
+class FlattenMapper(IdentityMapper):
+    def __init__(self, var_name, strides):
+        self.var_name = var_name
+        self.strides = strides
+
+    def map_subscript(self, expr):
+        if expr.aggregate.name == self.var_name:
+            new_idx = sum(stride*idx for stride, idx in zip(self.strides,
+                expr.index_tuple))
+            return Subscript(expr.aggregate, (new_idx, ))
+        return super(FlattenMapper, self).map_subscript(expr)
+
+
+def flatten_variable(kernel, var_name):
+    import numpy as np
+    old_tv = kernel.temporary_variables[var_name]
+    strides = tuple(dim_tag.stride for dim_tag in old_tv.dim_tags)
+    flattener = FlattenMapper(var_name, strides)
+
+    new_temps = kernel.temporary_variables.copy()
+    new_temps[var_name] = old_tv.copy(
+            shape=np.prod(old_tv.shape), dim_tags=None)
+
+    kernel = kernel.copy(
+            instructions=[insn.with_transformed_expressions(flattener) for
+                insn in kernel.instructions],
+            temporary_variables=new_temps)
+
+    return kernel
+
+
+class SimplifyMapper(IdentityMapper):
+    def __init__(self, kernel, var_name):
+        self.kernel = kernel
+        self.var_name = var_name
+
+    def map_subscript(self, expr):
+        if expr.aggregate.name == self.var_name:
+            return Subscript(expr.aggregate, tuple(
+                simplify_using_aff(self.kernel, idx) for idx in
+                expr.index_tuple))
+        return super(SimplifyMapper, self).map_subscript(expr)
+
+
+def simplify_index_expression_in_subscript(kernel, var_name):
+    simplifier = SimplifyMapper(kernel, var_name)
+    kernel = kernel.copy(
+            instructions=[insn.with_transformed_expressions(simplifier) for
+                insn in kernel.instructions],)
+    return kernel
+
 
 # vim: foldmethod=marker
