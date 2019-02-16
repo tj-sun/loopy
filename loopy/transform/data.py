@@ -30,7 +30,7 @@ from islpy import dim_type
 from loopy.kernel.data import ImageArg
 
 from pytools import MovedFunctionDeprecationWrapper
-from pymbolic.primitives import Subscript
+from pymbolic.primitives import Subscript, Variable
 from loopy.symbolic import (IdentityMapper, simplify_using_aff)
 from loopy.program import Program, iterate_over_kernels_if_given_program
 from loopy.kernel import LoopKernel
@@ -866,7 +866,8 @@ def flatten_variable(kernel, var_name):
 
     new_temps = kernel.temporary_variables.copy()
     new_temps[var_name] = old_tv.copy(
-            shape=np.prod(old_tv.shape), dim_tags=None)
+            shape=np.prod(old_tv.shape), dim_tags=None, dim_names=None,
+            strides=None)
 
     kernel = kernel.copy(
             instructions=[insn.with_transformed_expressions(flattener) for
@@ -894,6 +895,38 @@ def simplify_index_expression_in_subscript(kernel, var_name):
     kernel = kernel.copy(
             instructions=[insn.with_transformed_expressions(simplifier) for
                 insn in kernel.instructions],)
+    return kernel
+
+
+class NameChangingMapper(IdentityMapper):
+    def __init__(self, absorber_name, absorbee_name):
+        self.absorber_name = absorber_name
+        self.absorbee_name = absorbee_name
+
+    def map_subscript(self, expr):
+        if expr.aggregate.name == self.absorbee_name:
+            return Subscript(Variable(self.absorber_name), expr.index_tuple)
+        return super(NameChangingMapper, self).map_subscript(expr)
+
+
+def absorb_temporary_into(kernel, absorber, absorbee):
+    absorber_tv = kernel.temporary_variables[absorber]
+    absorbee_tv = kernel.temporary_variables[absorbee]
+
+    assert len(absorber_tv.shape) == 1
+    assert len(absorbee_tv.shape) == 1
+    assert absorbee_tv.shape[0] <= absorber_tv.shape[0]
+
+    new_temps = kernel.temporary_variables
+    del new_temps[absorbee]
+
+    name_changer = NameChangingMapper(absorber_tv.name, absorbee_tv.name)
+
+    kernel = kernel.copy(
+            instructions=[insn.with_transformed_expressions(name_changer) for
+                insn in kernel.instructions],
+            temporary_variables=new_temps)
+
     return kernel
 
 
