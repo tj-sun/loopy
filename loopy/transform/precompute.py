@@ -172,23 +172,7 @@ class RuleInvocationReplacer(RuleAwareIdentityMapper):
             return super(RuleInvocationReplacer, self).map_substitution(
                     name, tag, arguments, expn_state)
 
-        # {{{ check if in footprint
-
         rule = self.rule_mapping_context.old_subst_rules[name]
-        arg_context = self.make_new_arg_context(
-                    name, rule.arguments, arguments, expn_state.arg_context)
-        args = [arg_context[arg_name] for arg_name in rule.arguments]
-
-        accdesc = AccessDescriptor(
-                storage_axis_exprs=storage_axis_exprs(
-                    self.storage_axis_sources, args))
-
-        if not self.array_base_map.is_access_descriptor_in_footprint(accdesc):
-            return super(RuleInvocationReplacer, self).map_substitution(
-                    name, tag, arguments, expn_state)
-
-        # }}}
-
         assert len(arguments) == len(rule.arguments)
 
         abm = self.array_base_map
